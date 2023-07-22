@@ -1,7 +1,7 @@
 import scipy.stats
 from nutils import cli, types, export
 import treelog, numpy, pandas
-import TruncatedPowerLawCLEMENS2
+import TruncatedPowerLaw_sf, Newtonian_sf
 #####################
 # implement units   #
 #####################
@@ -48,8 +48,8 @@ class Model:
         assert (sigmatexp * sigmatexp).sum() < 1e-5 * (mutexp * mutexp).sum()
         muRexp = numpy.nanmean(Rexp, axis=1)
         sigmaRexp = numpy.nanstd(Rexp, axis=1)  # moet dit nu 1 of 2*sigma zijn. Alleen met 2*sigma neemt ie het hele gebied mee (in eerste instantie = 1)
-        Rmodel, dpdrt0, dpdrt1, dpdrt2, rt0, rt1, rt2 = self.R(params, mutexp)
-
+        # Rmodel, dpdrt0, dpdrt1, dpdrt2, rt0, rt1, rt2 = self.R(params, mutexp)
+        Rmodel = self.R(params, mutexp)
         if (Rmodel is None) or numpy.isnan(Rmodel).sum() > 0:
             self.paramNan.append(params)
             return -numpy.inf
@@ -64,145 +64,93 @@ class Model:
 ####################
 
 class Newtonian(Model):
-    def R(self, params, t):
-        F, Vd, R0d, etad = params
-
-        V   = numpy.exp(Vd)
-        R0  = numpy.exp(R0d)
-        eta = numpy.exp(etad)
-
-        h0      = 0.5 * ( V / (R0**2 * numpy.pi) )
-        h_ana   = h0 * (1 + (8 * F * (2 * h0) ** 2) / (3 * numpy.pi * eta * (R0 ** 4)) * t) ** (-1 / 4)
-        return R0 * numpy.sqrt(h0 / h_ana)
-
-
-
-class NewtonianLaplace(Model):
-    def R(self,params,texp):
+    def R(self, params, texp):
         F, Vd, R0d, etad, gamma, alpha = params
+        V, R0, eta = numpy.exp([Vd, R0d, etad])
+
+        return self.convergedN(F, V, R0, eta, gamma, alpha, texp)
+
+    def convergedN(self, F, V, R0, eta, gamma, alpha, texp):
         interptimes = texp
-
-        V = numpy.exp(Vd)
-        R0 = numpy.exp(R0d)
-        eta = numpy.exp(etad)
-
-        h0 = 0.5 * (V / (numpy.pi * R0 ** 2))
-        told = 0
-        T = 350.
         dtmax = 1.
-        s=0.01
-        dt = abs(s * (3 * numpy.pi * eta * R0 ** 4) / (8 * F * h0 ** 2))
-        hold = h0
-
-        h = []
-        R = []
-        t = []
-
-        h.append(h0)
-        R.append(R0)
-        t.append(told)
-
-        while told < T:
-            hdot = - (32 * numpy.pi * (hold ** 5 * F - ( gamma * alpha / hold) * V * hold ** 4)) / ( 3 * eta * V ** 2)  # kappa = 1 / Ri = 1 / (alpha * h)
-
-            hnew = hold + hdot*dt
-            Rnew = R0 * numpy.sqrt(h0 / hnew)
-            tnew = told + dt
-
-
-            # df = pandas.concat([df, pandas.DataFrame({'t': [tnew], 'h': [hnew], 'R': [Rnew]})], ignore_index=True)
-            h.append(hnew)
-            R.append(Rnew)
-            t.append(told)
-
-            dtprop = dt*1.5
-            dt = min(dtprop,dtmax) # find more appropriate adaptive time stepper
-
-
-            hold = hnew
-            told = tnew
-
+        s = 0.01
+        T = 350.
+        df = Newtonian_sf.main(dtmax, s, T, R0, eta, V, F, gamma, alpha)
+        R = df.R.to_numpy()
+        t = df.t.to_numpy()
         Rinterp = numpy.interp(interptimes, t, R)
-
         return Rinterp
 
-
-
-class PowerLaw(Model):
-    def R(self, params, t):
-        return
-
 class TruncatedPowerLaw(Model):
-    def R(self, params, t):
+    def R(self, params, texp):
 
-        T = 350.
         F, Vd, R0d, mu0d, muinfd, nd, tcrd, gamma, alpha = params
+        V, R0, mu0, muinf, n, tcr = numpy.exp([Vd, R0d, mu0d, muinfd, nd, tcrd])
 
-        interptimes = t
+        return self.convergedTPL(F, V, R0, mu0, muinf, n, tcr, gamma, alpha, texp)
 
-        V       = numpy.exp(Vd)
-        R0      = numpy.exp(R0d)
-        mu0     = numpy.exp(mu0d)
-        muinf   = numpy.exp(muinfd)
-        n       = numpy.exp(nd)
-        tcr     = numpy.exp(tcrd)
-        # treelog.user("What are the input parameters? \n", F, V, R0, mu0, muinf, n, tcr, gamma, alpha)
+    def convergedTPL(self,F, V, R0, mu0, muinf, n, tcr, gamma, alpha, texp):
+        interptimes = texp
 
-        h0 = 0.5 * (V / (numpy.pi * R0**2))
-        m = 1000
+        T       = 350.
+        h0      = 0.5 * (V / (numpy.pi * R0 ** 2))
+        m       = 1000
         npicard = 500
-        ntarget = 20
-        tol = 1e-5
-        s = 1e-3
-        Dtmax = 1.
+        tol     = 1e-5
+        s       = 1e-3
+        Dtmax   = 1.
 
-        # # # solve check om df heen voor het aantal iteraties
-        relax = 0
-        ntarget = 20
+        # Check converged solution with minimum amount of iterations
+        relax       = 0
+        ntarget     = 20
         convergence = None
         while convergence == None:
             try:
-                df, timelist, dpdrlist, rlist = TruncatedPowerLawCLEMENS2.main(mu0=mu0, muinf=muinf, tcr=tcr, n=n, R0=R0, h0=h0, F=F, T=T, m=m, npicard=npicard, ntarget=ntarget, tol=tol, s=s, Dtmax=Dtmax, relax=relax, gamma=gamma, alpha=alpha)
+                df, timelist, dpdrlist, rlist = TruncatedPowerLaw_sf.main(mu0=mu0, muinf=muinf, tcr=tcr, n=n, R0=R0,
+                                                                       h0=h0, F=F, T=T, m=m, npicard=npicard,
+                                                                       ntarget=ntarget, tol=tol, s=s, Dtmax=Dtmax,
+                                                                       relax=relax, gamma=gamma, alpha=alpha)
+
                 dpdrfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(dpdrlist), axis=0)
-                rfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(rlist), axis=0)
-                dpdrt0 = dpdrfun(2.e-2)
-                dpdrt1 = dpdrfun(1.5)
-                dpdrt2 = dpdrfun(10.)
-                rt0 = rfun(2.e-2)
-                rt1 = rfun(1.5)
-                rt2 = rfun(10.)
+                rfun    = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(rlist), axis=0)
+                dpdrt0  = dpdrfun(2.e-2)
+                dpdrt1  = dpdrfun(1.5)
+                dpdrt2  = dpdrfun(10.)
+                rt0     = rfun(2.e-2)
+                rt1     = rfun(1.5)
+                rt2     = rfun(10.)
+
                 convergence = True
             except:
                 if relax < 0.8:
-                    relax += 0.1
+                    relax   += 0.1
                     ntarget = 20 / (1 - relax)
 
                 else:
-                    df = pandas.DataFrame({'t': [], 'h': [], 'R': []})
-                    timelist = []
-                    dpdrlist = []
-                    rlist = []
-                    dpdrfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(dpdrlist), axis=0)
-                    rfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(rlist), axis=0)
-                    dpdrt0 = dpdrfun(2.e-2)
-                    dpdrt1 = dpdrfun(1.5)
-                    dpdrt2 = dpdrfun(10.)
-                    rt0 = rfun(2.e-2)
-                    rt1 = rfun(1.5)
-                    rt2 = rfun(10.)
+                    df          = pandas.DataFrame({'t': [], 'h': [], 'R': []})
+                    timelist    = []
+                    dpdrlist    = []
+                    rlist       = []
+
+                    dpdrfun     = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(dpdrlist), axis=0)
+                    rfun        = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(rlist), axis=0)
+                    dpdrt0      = dpdrfun(2.e-2)
+                    dpdrt1      = dpdrfun(1.5)
+                    dpdrt2      = dpdrfun(10.)
+                    rt0         = rfun(2.e-2)
+                    rt1         = rfun(1.5)
+                    rt2         = rfun(10.)
 
                     convergence = False
 
             if not convergence:
                 return None, None, None, None, None, None, None
 
-
-        # df = TruncatedPowerLawCLEMENS2.main(mu0=mu0, muinf=muinf, tcr=tcr, n=n, R0=R0, h0=h0, F=F, T=T, m=m, npicard=npicard, ntarget=ntarget, tol=tol, s=s, Dtmax=Dtmax, relax=relax, gamma=gamma, alpha=alpha)
-        Rtot = df.R.to_numpy()
-        ttot = df.t.to_numpy()
+        Rtot    = df.R.to_numpy()
+        ttot    = df.t.to_numpy()
         Rinterp = numpy.interp(interptimes, ttot, Rtot)
 
-        return Rinterp, dpdrt0, dpdrt1, dpdrt2, rt0, rt1, rt2
+        return Rinterp#, dpdrt0, dpdrt1, dpdrt2, rt0, rt1, rt2
 
 
 

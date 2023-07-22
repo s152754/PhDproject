@@ -56,13 +56,13 @@ def main(model: str, nwalkers: int, nsamples: int, case: str, fname:str, fmodeln
     '''
     Bayesian inference
     .. arguments::
-       model [tpl]
+       model [newtonian]
          Model to be fitted to the data
-       nwalkers [8]
+       nwalkers [4]
          Number of chains
-       nsamples [20000]
+       nsamples [250]
          Number of steps
-       case [rheometerPVP/]
+       case [rheometerGly/]
          define which material
        fname [BI_Rheoparam_PVP_TPLnhat.csv]
          Bayesian inference model parameters filename
@@ -114,11 +114,9 @@ def main(model: str, nwalkers: int, nsamples: int, case: str, fname:str, fmodeln
     θstarts = model.sample_prior(nwalkers)
 
     # sampler configuration
-    sampler = emcee.EnsembleSampler(nwalkers, model.nparams, model.log_probability, args=(γpoints, ηpoints)) #, moves=emcee.moves.StretchMove(a=8.0))
-
+    sampler = emcee.EnsembleSampler(nwalkers, model.nparams, model.log_probability, args=(γpoints, ηpoints))
     # sampling
     sampler.run_mcmc(θstarts, nsamples, progress=True)
-
     with treelog.context('post processing'):
 
         samples = sampler.get_chain()
