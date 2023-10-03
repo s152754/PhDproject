@@ -13,7 +13,7 @@ def main(dtmax: unit['s'], s: float, T: unit['s'], R0: unit['m'], eta: unit['Pa*
                 maximum time step
             s [0.01]
                 factor increasing/decreasing first time step
-            T [300s]
+            T [3s]
                 Final time
             R0 [0.733cm]
                 initial radius
@@ -31,15 +31,18 @@ def main(dtmax: unit['s'], s: float, T: unit['s'], R0: unit['m'], eta: unit['Pa*
 
     pp = PostProcessing()
 
+    # initialization
     h0      = 0.5 * (V / (numpy.pi * R0 ** 2))
     told    = 0
     hold    = h0
     estep   = 1e-6
     dtnew   = abs(s * (3 * numpy.pi * eta * R0 ** 4) / (8 * F * h0 ** 2))
 
+    # iterative solver
     while told < T:
 
         Rold = R0 * numpy.sqrt(h0 / hold)
+
         pp.propfile(told, Rold, hold)
 
         hdot = - (32 * numpy.pi * (hold ** 5 * F - (gamma * alpha / hold) * V * hold ** 4)) / (
@@ -49,7 +52,7 @@ def main(dtmax: unit['s'], s: float, T: unit['s'], R0: unit['m'], eta: unit['Pa*
         tnew    = told + dtnew
         dtold   = dtnew
 
-        ## Hier komt een stukje voor adaptive timestep tot 1 sec
+        # adaptive timestepper
         if dtnew < dtmax:
             ha      = hold + hdot * dtold
             hb1     = hold + hdot * 0.5*dtold
@@ -64,6 +67,7 @@ def main(dtmax: unit['s'], s: float, T: unit['s'], R0: unit['m'], eta: unit['Pa*
         hold = hnew
         told = tnew
 
+    pp.plot()
     return pp.df
 
 class PostProcessing:
@@ -74,5 +78,17 @@ class PostProcessing:
     def propfile(self,t,R,h):
         self.df = pandas.concat([self.df, pandas.DataFrame({'t': [t], 'h': [h], 'R': [R]})], ignore_index=True)
 
+    def plot(self):
+        with export.mplfigure('R.png') as fig:
+            ax = fig.add_subplot(111, xlabel='t [s]', ylabel='R [mm]')
+            ax.plot(self.df['t'] / unit('s'), self.df['R'] / unit('mm'), '.-')
+            ax.grid()
 
-# cli.run(main)
+        with export.mplfigure('h.png') as fig:
+            ax = fig.add_subplot(111, xlabel='$t$ [s]', ylabel='$h$ [mm]')
+            ax.plot(self.df['t'] / unit('s'), self.df['h'] / unit('mm'), '.-')
+            ax.grid()
+            ax.legend()
+
+
+cli.run(main)
