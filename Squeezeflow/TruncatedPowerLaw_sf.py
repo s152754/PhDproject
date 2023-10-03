@@ -71,11 +71,10 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
         alpha [1.]
             factor to decide on curvature laplace boundary
     '''
-    # of h=1.26 mm
     # initialization
     t = 0
     h = h0
-    R = R0 # moet voor Laplace initialization
+    R = R0
     r = numpy.linspace(0,R0,m+1)
     p = 2*F/(numpy.pi*R0**2)*(1-(r/R0)**2)
 
@@ -83,9 +82,8 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
     pp = PostProcessing(mu0, muinf, tcr, n)
 
     # initial time step based on lowest possible viscosity solution
-    Δt = s*(3*numpy.pi*muinf*R0**4)/(8*F*h0**2) # s=1 kan vgm ook
-    # treelog.user("time step initial\n",Δt)
-    # treelog.user("what is s\n", s)
+    Δt = s*(3*numpy.pi*muinf*R0**4)/(8*F*h0**2)
+    treelog.user("time step initial\n",Δt)
     # differentiate the pressure
     dpdr = differentiate(p, r)
 
@@ -93,6 +91,7 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
     dpdrlist = []
     rlist = []
 
+    # Picard solver to determine dp/dr
     with treelog.context('solving for t={:4.2e} [s]', t/unit('s')) as printtime:
         while t < T:
 
@@ -117,7 +116,6 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
                     rc   = 0.5*(r[:-1]+r[1:])
                     dr   = r[1:]-r[:-1]
                     f    = (rc/C*dr)[::-1].cumsum()[::-1]
-                    # hdot = -F/(2*numpy.pi*(rc*f*dr).sum())  # excluding Laplace
                     hdot = -F/(2*numpy.pi*(rc*f*dr).sum()) + ( (gamma*alpha)/ h ) * R**2 / ((rc*f*dr).sum()) # including Laplace
 
 
@@ -127,14 +125,14 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
 
                     err = abs(ddpdr/Δdpdr)
                     converged = (err<tol)
-                    # treelog.info(f'{converged.sum()}/{converged.size} converged, max error={numpy.max(err):4.3e}')
-                    # treelog.user("Delta dpdr", numpy.max(abs(Δdpdr)))
+                    treelog.info(f'{converged.sum()}/{converged.size} converged, max error={numpy.max(err):4.3e}')
+                    treelog.user("Delta dpdr", numpy.max(abs(Δdpdr)))
                     if all(converged):
                         break
 
             if all(converged):
-                # plot the converged solution
-                # pp.plot(t, r, dpdr, h, w1, w2)
+                # plot the converged solution + save data
+                pp.plot(t, r, dpdr, h, w1, w2)
                 pp.sampledata(t, r, h)
 
                 timelist.append(t)
@@ -146,8 +144,6 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
                 #     treelog.user("wat is bijbehorende t?\n",t)        #
                 #     break                                             #
                 #########################################################
-
-                # call function to save dpdr for t in between 0.5 and 2.5
 
                 # increment the time step
                 Δt *= ntarget/iteration
@@ -163,6 +159,7 @@ def main(mu0: unit['Pa*s'], muinf: unit['Pa*s'], tcr: unit['s'], n: float, R0: u
                 raise Exception("no convergence")
                 break # check to go to next simulation
 
+        # Get the interface locations
         # dpdrfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(dpdrlist), axis=0)
         # rfun = scipy.interpolate.interp1d(numpy.array(timelist), numpy.array(rlist), axis=0)
         # dpdrt1 = dpdrfun(1.5)
@@ -212,44 +209,36 @@ class PostProcessing:
     def plot(self, t, r, dpdr, h, w1, w2):
 
         rc = 0.5*(r[:-1]+r[1:])
-        # dr = differentiate(r)
-        #
-        # p = numpy.append(0,numpy.cumsum(dpdr*dr))-(dpdr*dr).sum()
-        #
-        # with export.mplfigure('p.png') as fig:
-        #     ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='p [Pa]')
-        #     ax.plot(r / unit('mm'), p / unit('Pa'))
-        #     ax.grid()
-        #
-        # with export.mplfigure('dpdr.png') as fig:
-        #     ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='dp/dr [Pa/mm]')
-        #     ax.plot(rc / unit('mm'), dpdr / (unit('Pa')/unit('mm')))
-        #     ax.grid()
-        #
-        # # contour plots
-        # z  = numpy.linspace(0,h,self.nz)
-        # zc = 0.5*(z[:-1]+z[1:])
-        # rm, zm = numpy.meshgrid(rc, zc)
-        #
-        # region = (zm>w1).astype(int)+(zm>w2).astype(int)
-        #
-        # γ1 = abs(1/self.mu0*dpdr[_,:]*zm)
-        # γ2 = abs(dpdr[_,:]*(self.tcr**(1-self.n)/self.mu0)**(1/self.n)*abs(dpdr[_,:])**((1-self.n)/self.n)*(zm**(1/self.n)))
-        # γ3 = abs(1/self.muinf*dpdr[_,:]*zm)
-        # γ  = numpy.choose(region, [γ1, γ2, γ3])
-        #
-        # μ1 = self.mu0*numpy.ones_like(γ1)
-        # μ2 = self.mu0*(self.tcr*γ2)**(self.n-1)
-        # μ3 = self.muinf*numpy.ones_like(γ2)
-        # μ  = numpy.choose(region, [μ1, μ2, μ3])
-        #
-        # with export.mplfigure('regions.png') as fig:
-        #     ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='h [mm]', ylim=(0, 1.1*h))
-        #     ax.plot(rc / unit('mm'), h * numpy.ones_like(rc), label='$h$')
-        #     ax.plot(rc / unit('mm'), w1, label='$w_1$')
-        #     ax.plot(rc / unit('mm'), w2, label='$w_2$')
-        #     ax.grid()
-        #     ax.legend()
+        dr = differentiate(r)
+
+        p = numpy.append(0,numpy.cumsum(dpdr*dr))-(dpdr*dr).sum()
+
+        with export.mplfigure('p.png') as fig:
+            ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='p [Pa]')
+            ax.plot(r / unit('mm'), p / unit('Pa'))
+            ax.grid()
+
+        with export.mplfigure('dpdr.png') as fig:
+            ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='dp/dr [Pa/mm]')
+            ax.plot(rc / unit('mm'), dpdr / (unit('Pa')/unit('mm')))
+            ax.grid()
+
+        # contour plots
+        z  = numpy.linspace(0,h,self.nz)
+        zc = 0.5*(z[:-1]+z[1:])
+        rm, zm = numpy.meshgrid(rc, zc)
+
+        region = (zm>w1).astype(int)+(zm>w2).astype(int)
+
+        γ1 = abs(1/self.mu0*dpdr[_,:]*zm)
+        γ2 = abs(dpdr[_,:]*(self.tcr**(1-self.n)/self.mu0)**(1/self.n)*abs(dpdr[_,:])**((1-self.n)/self.n)*(zm**(1/self.n)))
+        γ3 = abs(1/self.muinf*dpdr[_,:]*zm)
+        γ  = numpy.choose(region, [γ1, γ2, γ3])
+
+        μ1 = self.mu0*numpy.ones_like(γ1)
+        μ2 = self.mu0*(self.tcr*γ2)**(self.n-1)
+        μ3 = self.muinf*numpy.ones_like(γ2)
+        μ  = numpy.choose(region, [μ1, μ2, μ3])
 
         with export.mplfigure('regionsppt.png') as fig:
             ax = fig.add_subplot(111, xlabel=r'$r \ [\mathrm{mm}]$', ylabel=r'$z \ [\mathrm{mm}]$', ylim=(0, 1.1*h))
@@ -266,38 +255,38 @@ class PostProcessing:
         #     ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='h [mm]')
         #     img = ax.contourf(rm/unit('mm'), zm/unit('mm'), γ*unit('s'))
         #     fig.colorbar(img, label='γ [1/s]')
-        #
+
         # with export.mplfigure('viscosity.png') as fig:
         #     ax = fig.add_subplot(111, xlabel='r [mm]', ylabel='h [mm]')
         #     img = ax.contourf(rm/unit('mm'), zm/unit('mm'), μ/unit('Pa*s'))
         #     fig.colorbar(img, label='μ [Pa s]')
-        #
-        # # time plots
-        # R = r[-1]
-        # self.df = pandas.concat([self.df, pandas.DataFrame({'t': [t], 'h': [h], 'R': [R]})], ignore_index=True)
-        #
-        # if self.df.shape[0]>0:
-        #     with export.mplfigure('R.png') as fig:
-        #         ax = fig.add_subplot(111, xlabel='t [s]', ylabel='R [mm]')
-        #         ax.plot(self.df['t'] / unit('s'), self.df['R'] / unit('mm'), '.-')
-        #         ax.grid()
-        #
-        #     with export.mplfigure('h.png') as fig:
-        #         ax = fig.add_subplot(111, xlabel='$t$ [s]', ylabel='$h$ [mm]')
-        #         ax.plot(self.df['t'] / unit('s'), self.df['h'] / unit('mm'), '.-')
-        #         ax.grid()
-        #         ax.legend()
-        #
-        # if self.df.shape[0]>1:
-        #     hdot = differentiate(self.df['h'].to_numpy(), self.df['t'].to_numpy())
-        #     with export.mplfigure('hdot.png') as fig:
-        #         ax = fig.add_subplot(111, xlabel='t [s]', ylabel='hdot [mm/s]')
-        #         ax.plot(self.df['t'][1:] / unit('s'), hdot / (unit('mm')/unit('s')), '.-')
-        #         ax.grid()
-        #
-        # # save data frame to file
-        # with treelog.userfile('timeseries.csv', 'w') as f:
-        #     self.df.to_csv(f, index=False)
+
+        # time plots
+        R = r[-1]
+        self.df = pandas.concat([self.df, pandas.DataFrame({'t': [t], 'h': [h], 'R': [R]})], ignore_index=True)
+
+        if self.df.shape[0]>0:
+            with export.mplfigure('R.png') as fig:
+                ax = fig.add_subplot(111, xlabel='t [s]', ylabel='R [mm]')
+                ax.plot(self.df['t'] / unit('s'), self.df['R'] / unit('mm'), '.-')
+                ax.grid()
+
+            with export.mplfigure('h.png') as fig:
+                ax = fig.add_subplot(111, xlabel='$t$ [s]', ylabel='$h$ [mm]')
+                ax.plot(self.df['t'] / unit('s'), self.df['h'] / unit('mm'), '.-')
+                ax.grid()
+                ax.legend()
+
+        if self.df.shape[0]>1:
+            hdot = differentiate(self.df['h'].to_numpy(), self.df['t'].to_numpy())
+            with export.mplfigure('hdot.png') as fig:
+                ax = fig.add_subplot(111, xlabel='t [s]', ylabel='hdot [mm/s]')
+                ax.plot(self.df['t'][1:] / unit('s'), hdot / (unit('mm')/unit('s')), '.-')
+                ax.grid()
+
+        # save data frame to file
+        with treelog.userfile('timeseries.csv', 'w') as f:
+            self.df.to_csv(f, index=False)
 
 
 def differentiate(f, x=None):
@@ -305,4 +294,4 @@ def differentiate(f, x=None):
         return f[1:]-f[:-1]
     return (f[1:]-f[:-1])/(x[1:]-x[:-1])
 
-# cli.run(main)
+cli.run(main)
