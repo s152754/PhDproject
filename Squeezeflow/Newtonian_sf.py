@@ -88,7 +88,6 @@ class PostProcessing:
             ax = fig.add_subplot(111, xlabel='$t$ [s]', ylabel='$h$ [mm]')
             ax.plot(self.df['t'] / unit('s'), self.df['h'] / unit('mm'), '.-')
             ax.grid()
-            ax.legend()
 
 
 cli.run(main)
